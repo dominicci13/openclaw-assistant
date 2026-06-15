@@ -1,0 +1,235 @@
+# OpenClaw — hardened single-user gateway (Milestone 1).
+# Deviations from upstream compose are deliberate:
+#   - ZERO published ports (ClawJacked: localhost is not a trusted zone)
+#   - bind loopback, not lan
+#   - no docker.sock mount, not even commented out
+#   - pinned image version (audit log tracks digest)
+#   - cap_drop ALL, read-only rootfs, resource limits
+
+services:
+  openclaw-gateway:
+    image: ghcr.io/openclaw/openclaw:2026.6.5
+    container_name: openclaw-gateway
+    networks:
+      - openclaw-internal
+    # proxy.enabled is fail-closed: the gateway must reach the egress proxy at
+    # startup, so wait until squid is healthy before starting.
+    depends_on:
+      openclaw-proxy:
+        condition: service_healthy
+    # Load the same secrets file OpenClaw reads, as REAL container env vars at
+    # startup. Bundled keyed web-search providers (e.g. tavily, which declares
+    # envVars: ["TAVILY_API_KEY"]) detect their credential from process.env at
+    # startup, so it must be a real env var, not only OpenClaw's self-loaded .env.
+    env_file:
+      - ./instance/config/.env
+    environment:
+      HOME: /home/node
+      OPENCLAW_HOME: /home/node
+      TERM: xterm-256color
+      # Pin container-side paths so host paths can never leak into runtime
+      # (upstream issue #77436)
+      OPENCLAW_STATE_DIR: /home/node/.openclaw
+      OPENCLAW_CONFIG_PATH: /home/node/.openclaw/openclaw.json
+      OPENCLAW_CONFIG_DIR: /home/node/.openclaw
+      OPENCLAW_WORKSPACE_DIR: /home/node/.openclaw/workspace
+      TZ: America/Santo_Domingo
+      # web_fetch with useTrustedEnvProxy reads the standard proxy env vars;
+      # without them it falls back to local DNS pinning, which the internal
+      # network (rightly) breaks.
+      HTTP_PROXY: http://openclaw-proxy:3128
+      HTTPS_PROXY: http://openclaw-proxy:3128
+      # NOTE: OpenClaw CLEARS NO_PROXY when proxy.enabled is on (anti-SSRF), so
+      # this list is effectively ignored at runtime. Gateway->sidecar traffic is
+      # therefore forced through squid, and openclaw-gmail is allowlisted there.
+      NO_PROXY: localhost,127.0.0.1,::1
+      # Shared secret for bearer auth to the Gmail sidecar. Compose substitutes
+      # it from the repo-root .env into the gateway's process env; OpenClaw then
+      # resolves ${GMAIL_MCP_BEARER_TOKEN} in openclaw.json (mcp.servers.gmail
+      # .headers.Authorization) and sends it on every MCP request.
+      GMAIL_MCP_BEARER_TOKEN: ${GMAIL_MCP_BEARER_TOKEN}
+    volumes:
+      - ./instance/config:/home/node/.openclaw
+      - ./instance/workspace:/home/node/.openclaw/workspace
+      - ./instance/secrets:/home/node/.config/openclaw
+    # No ports: section. Telegram long-polls outbound; nothing dials in.
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    mem_limit: 2g
+    cpus: 2
+    init: true
+    restart: unless-stopped
+    command:
+      ["node", "dist/index.js", "gateway", "--bind", "loopback", "--port", "18789"]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:18789/healthz').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  openclaw-cli:
+    image: ghcr.io/openclaw/openclaw:2026.6.5
+    # Admin-only service: the profile keeps `docker compose up -d` from starting
+    # it as a permanently-running container. `docker compose run --rm openclaw-cli`
+    # still works — run targets the named service regardless of profile.
+    profiles: ["admin"]
+    # Shares the gateway's network namespace — this is how admin works with
+    # zero published ports: the CLI is "inside" with the gateway.
+    network_mode: "service:openclaw-gateway"
+    # Same secrets the gateway loads, so the CLI resolves ${OPENCLAW_GATEWAY_TOKEN}
+    # in openclaw.json and authenticates as a TRUSTED OPERATOR (shared-secret auth =
+    # full operator scope incl. admin). Without it the CLI connects as an unpaired
+    # read-only device and admin mutations (cron create/edit/remove) are gated.
+    # Safe here: the CLI is ephemeral, operator-run, same image/trust as the gateway
+    # (unlike the always-on sidecar, where we deliberately withheld the bundle).
+    env_file:
+      - ./instance/config/.env
+    environment:
+      HOME: /home/node
+      OPENCLAW_HOME: /home/node
+      TERM: xterm-256color
+      OPENCLAW_STATE_DIR: /home/node/.openclaw
+      OPENCLAW_CONFIG_PATH: /home/node/.openclaw/openclaw.json
+      OPENCLAW_CONFIG_DIR: /home/node/.openclaw
+      OPENCLAW_WORKSPACE_DIR: /home/node/.openclaw/workspace
+      BROWSER: echo
+      TZ: America/Santo_Domingo
+      # Resolve the sidecar bearer ref too, so config loads without the noisy
+      # "missing env var" warning (cosmetic for the CLI; it never calls the sidecar).
+      GMAIL_MCP_BEARER_TOKEN: ${GMAIL_MCP_BEARER_TOKEN}
+    volumes:
+      - ./instance/config:/home/node/.openclaw
+      - ./instance/workspace:/home/node/.openclaw/workspace
+      - ./instance/secrets:/home/node/.config/openclaw
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    init: true
+    stdin_open: true
+    tty: true
+    entrypoint: ["node", "dist/index.js"]
+    depends_on:
+      - openclaw-gateway
+
+  openclaw-proxy:
+    # Squid 6.13, pinned by digest. Default-DENY egress allowlist — every
+    # OpenClaw outbound request is routed here (step 4) and allowed only if its
+    # destination domain is in proxy/allowlist.txt.
+    image: ubuntu/squid@sha256:6a097f68bae708cedbabd6188d68c7e2e7a38cedd05a176e1cc0ba29e3bbe029
+    container_name: openclaw-proxy
+    networks:
+      - openclaw-internal
+      - openclaw-egress
+    volumes:
+      - ./proxy/squid.conf:/etc/squid/squid.conf:ro
+      - ./proxy/allowlist.txt:/etc/squid/allowlist.txt:ro
+      # Writable tmpfs dirs for squid's runtime/log/cache. mode 1777 so the
+      # unprivileged `proxy` user (squid setuid's to it) can write — a plain
+      # tmpfs mount is root-owned and would block it.
+      - type: tmpfs
+        target: /var/run
+        tmpfs: { mode: 0o1777 }
+      # Egress audit log on the HOST (mode-1777 dir, same proxy-user write
+      # reason as the tmpfs mounts) — the audit trail must survive restarts.
+      - ./instance/logs/squid:/var/log/squid
+      - type: tmpfs
+        target: /var/spool/squid
+        tmpfs: { mode: 0o1777 }
+      - type: tmpfs
+        target: /tmp
+        tmpfs: { mode: 0o1777 }
+    # No published ports: only containers on openclaw-net can reach the proxy.
+    # Image starts as root then squid setuid's to the proxy user — so drop ALL
+    # caps but re-add only what that privilege-drop + dir setup needs.
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETUID
+      - SETGID
+      - CHOWN
+      - DAC_OVERRIDE
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    mem_limit: 512m
+    cpus: 1
+    init: true
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "squid", "-k", "check"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  openclaw-gmail:
+    # Self-built Gmail MCP sidecar (mcp-gmail/). Read + draft only; the OAuth
+    # token it holds (readonly + compose scopes) physically cannot send/delete.
+    # Same hardening posture as the proxy: locked box, one job.
+    build: ./mcp-mail
+    image: openclaw-gmail:0.1
+    container_name: openclaw-gmail
+    networks:
+      - openclaw-internal
+    # Reaches Google ONLY through squid â same fail-closed chokepoint as the
+    # gateway. No direct egress.
+    environment:
+      MCP_TRANSPORT: streamable-http
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: "8000"
+      GMAIL_SECRETS_DIR: /secrets
+      OUTLOOK_SECRETS_DIR: /secrets-outlook
+      ICLOUD_SECRETS_DIR: /secrets-icloud
+      HTTP_PROXY: http://openclaw-proxy:3128
+      HTTPS_PROXY: http://openclaw-proxy:3128
+      NO_PROXY: localhost,127.0.0.1,::1
+      # Shared secret for bearer auth on the MCP endpoint. Substituted by compose
+      # from the repo-root .env. This is the ONLY new var the sidecar learns;
+      # least-privilege intact (it still never sees the gateway's secret bundle).
+      GMAIL_MCP_BEARER_TOKEN: ${GMAIL_MCP_BEARER_TOKEN}
+    volumes:
+      # The token + client secret, read-only. This is the ONLY container that
+      # ever sees Gmail credentials â never the gateway.
+      - ./instance/gmail:/secrets:ro
+      # Outlook (Graph) creds - separate read-only mount (M5). Same isolation as
+      # Gmail's: only this sidecar ever sees them, never the gateway.
+      - ./instance/outlook:/secrets-outlook:ro
+      # iCloud (IMAP) creds - app-specific password, separate read-only mount (M5 B).
+      - ./instance/icloud:/secrets-icloud:ro
+    # No published ports: only the gateway (same internal net) can reach it.
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    mem_limit: 512m
+    cpus: 1
+    init: true
+    restart: unless-stopped
+    depends_on:
+      openclaw-proxy:
+        condition: service_healthy
+
+networks:
+  # Gateway lives ONLY here. internal: true = Docker attaches no route to the
+  # outside world; the proxy is the sole bridge between this net and the internet.
+  openclaw-internal:
+    internal: true
+  # Internet-facing side. Proxy only.
+  openclaw-egress:

@@ -1,0 +1,44 @@
+# === Secrets — NEVER commit (defense in depth: patterns + explicit paths) ===
+.env
+*.env
+**/.env
+!*.env.example
+*.key
+*.pem
+**/token.json
+**/token_cache.json
+**/client_secret*.json
+
+# === instance/ = runtime state + LIVE credentials + the agent workspace
+#     (its own embedded git repo). Ignore it ALL; track only sanitized examples. ===
+instance/*
+!instance/config/
+instance/config/*
+!instance/config/openclaw.json.example
+!instance/config/.env.example
+
+# === Python venv / caches / bytecode ===
+mcp-mail/.venv/
+.venv/
+**/__pycache__/
+*.pyc
+
+# === Databases / vector stores ===
+*.db
+*.rvf
+
+# === Upstream OpenClaw clone (their repo + their .git — reference only) ===
+upstream/
+
+# === Internal working docs / tooling artifacts (not for the public repo) ===
+.claude/
+CLAUDE.md
+tasks/
+MEMORY.md
+HANDOFF.md
+SECURITY-AUDIT.md
+OPENCLAW-TRACK.md
+
+# === OS cruft ===
+.DS_Store
+._*

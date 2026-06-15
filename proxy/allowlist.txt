@@ -1,0 +1,24 @@
+# Infrastructure OpenClaw MUST reach (all egress flows through this proxy):
+.anthropic.com
+.telegram.org
+.tavily.com
+
+# web_fetch content domains — start tiny, grow via the "ask Brian" flow.
+.wikipedia.org
+
+# Gmail MCP sidecar (M4) â Gmail API + OAuth token refresh.
+.googleapis.com
+
+# The MCP sidecar itself (M4). OpenClaw forces gateway->sidecar through squid
+# (it clears NO_PROXY), so the gateway can only reach it if allowlisted -
+# one chokepoint, default-deny, even for internal RPC. Exact single-label host.
+openclaw-gmail
+
+# Outlook (Microsoft Graph) MCP provider (M5) - Graph API + MSAL token refresh
+# (device-code consent itself happens in Brian's browser on the host, not here).
+login.microsoftonline.com
+graph.microsoft.com
+
+# iCloud IMAP MCP provider (M5 Phase B) - IMAPS over a hand-rolled CONNECT tunnel
+# through squid (imaplib won't use an HTTP proxy itself). Port 993 (see squid.conf).
+imap.mail.me.com

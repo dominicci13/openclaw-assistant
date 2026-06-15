@@ -1,0 +1,71 @@
+{
+    "mcp": {
+        "servers": {
+            "mail": {
+                "url": "http://openclaw-gmail:8000/mcp",
+                "transport": "streamable-http",
+                "headers": {
+                    "Authorization": "Bearer ${GMAIL_MCP_BEARER_TOKEN}"
+                },
+                "toolFilter": {
+                    "include": ["search_messages", "get_message", "create_draft"]
+                }
+            }
+        }
+    },
+
+    "tools": {
+        "profile": "messaging",
+        "alsoAllow": ["web_fetch", "web_search", "mail__*"],
+        "deny": ["group:runtime", "group:fs", "group:automation", "sessions_spawn", "sessions_send"],
+        "exec": { "mode": "deny" },
+        "elevated": { "enabled": false },
+        "fs": { "workspaceOnly": true },
+        "web": {
+            "search": { "provider": "tavily", "maxResults": 5, "timeoutSeconds": 30 },
+            "fetch": { "maxChars": 10000, "timeoutSeconds": 30, "useTrustedEnvProxy": true }
+        }
+    },
+
+    "plugins": {
+        "allow": []
+    },
+
+    "channels": {
+        "telegram": {
+            "enabled": true,
+            "botToken": "${TELEGRAM_BOT_TOKEN}",
+            "dmPolicy": "allowlist",
+            "allowFrom": ["YOUR_TELEGRAM_USER_ID"],
+            "groupPolicy": "disabled",
+            "configWrites": false
+        }
+    },
+
+    "commands": {
+        "ownerAllowFrom": ["telegram:YOUR_TELEGRAM_USER_ID"]
+    },
+
+    "agents": {
+        "defaults": {
+            "workspace": "~/.openclaw/workspace",
+            "model": {
+                "primary": "anthropic/claude-sonnet-4-6"
+            }
+        }
+    },
+
+    "gateway": {
+        "mode": "local",
+        "bind": "loopback",
+        "auth": {
+            "mode": "token",
+            "token": "${OPENCLAW_GATEWAY_TOKEN}"
+        }
+    },
+
+    "proxy": {
+        "enabled": true,
+        "proxyUrl": "http://openclaw-proxy:3128"
+    }
+}
