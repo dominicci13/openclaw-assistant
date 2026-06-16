@@ -52,6 +52,8 @@ services:
       DRIVE_MCP_BEARER_TOKEN: ${DRIVE_MCP_BEARER_TOKEN}
       # Same, for the Calendar sidecar (mcp.servers.calendar.headers.Authorization).
       CALENDAR_MCP_BEARER_TOKEN: ${CALENDAR_MCP_BEARER_TOKEN}
+      # Same, for the GitHub sidecar (mcp.servers.github.headers.Authorization).
+      GITHUB_MCP_BEARER_TOKEN: ${GITHUB_MCP_BEARER_TOKEN}
       # OpenAI key for inbound voice transcription (STT). OpenClaw's media preflight
       # reads OPENAI_API_KEY from the env; egress to api.openai.com goes via squid.
       OPENAI_API_KEY: ${OPENAI_API_KEY}
@@ -211,6 +213,8 @@ services:
       # recipient still requires the code. Model can't edit this list.
       OWN_EMAIL_ADDRESSES: ${OWN_EMAIL_ADDRESSES}
       ICLOUD_SECRETS_DIR: /secrets-icloud
+      # Claw's own send-only Gmail identity (claw.brian.ai@gmail.com), gmail.send scope.
+      CLAW_SECRETS_DIR: /secrets-claw
       HTTP_PROXY: http://openclaw-proxy:3128
       HTTPS_PROXY: http://openclaw-proxy:3128
       NO_PROXY: localhost,127.0.0.1,::1
@@ -227,6 +231,8 @@ services:
       - ./instance/outlook:/secrets-outlook:ro
       # iCloud (IMAP) creds - app-specific password, separate read-only mount (M5 B).
       - ./instance/icloud:/secrets-icloud:ro
+      # Claw's own send-only Gmail token (gmail.send), separate read-only mount.
+      - ./instance/clawmail:/secrets-claw:ro
     # No published ports: only the gateway (same internal net) can reach it.
     cap_drop:
       - ALL
@@ -319,6 +325,46 @@ services:
       # iCloud MAIL app password (independent revocation; same blast radius is inherent
       # to iCloud app passwords being all-or-nothing).
       - ./instance/icloudcal:/secrets-icloudcal:ro
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    mem_limit: 512m
+    cpus: 1
+    init: true
+    restart: unless-stopped
+    depends_on:
+      openclaw-proxy:
+        condition: service_healthy
+
+  openclaw-github:
+    # Self-built GitHub MCP sidecar (mcp-github/). READ-ONLY: list/get repos,
+    # list/read files, search code. No tool can write/push/delete, and the
+    # fine-grained PAT it holds is itself scoped (on GitHub) to read-only on a
+    # limited set of repos. SEPARATE from mail/drive/calendar: holds only its own
+    # GitHub PAT, never any other credential. Same hardening; egress only via squid.
+    build: ./mcp-github
+    image: openclaw-github:0.1
+    container_name: openclaw-github
+    networks:
+      - openclaw-internal
+    environment:
+      MCP_TRANSPORT: streamable-http
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: "8000"
+      GITHUB_SECRETS_DIR: /secrets-github
+      HTTP_PROXY: http://openclaw-proxy:3128
+      HTTPS_PROXY: http://openclaw-proxy:3128
+      NO_PROXY: localhost,127.0.0.1,::1
+      # Bearer auth for the gateway->github MCP endpoint (root .env single source).
+      GITHUB_MCP_BEARER_TOKEN: ${GITHUB_MCP_BEARER_TOKEN}
+    volumes:
+      # The GitHub PAT, read-only. Only this container ever sees it (never the
+      # gateway). A file, not an env var, so it stays out of `docker inspect`.
+      - ./instance/github:/secrets-github:ro
     cap_drop:
       - ALL
     security_opt:

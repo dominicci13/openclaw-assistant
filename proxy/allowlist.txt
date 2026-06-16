@@ -6,6 +6,12 @@
 # web_fetch content domains — start tiny, grow via the "ask the user" flow.
 .wikipedia.org
 
+# OpenClaw security-watch (daily cron): read the latest release + security advisories so
+# Claw can flag if we're behind/exposed. api.github.com = releases/latest JSON;
+# github.com = the advisories page. Read-only web_fetch.
+github.com
+api.github.com
+
 # Shopping + flights (added 2026-06-16 at the user's request, for the demo). CAVEAT: these are
 # heavily JS-rendered + bot-hostile, so web_fetch (no JS, no browser fingerprint) often gets
 # blocked or returns no prices — web_search (Tavily) is the better source until the BROWSER
@@ -37,6 +43,10 @@ openclaw-drive
 
 # The Calendar MCP sidecar — same chokepoint reason (gateway->sidecar via squid).
 openclaw-calendar
+
+# The GitHub MCP sidecar — same chokepoint reason (gateway->sidecar via squid).
+# (api.github.com, the only external host it reaches, is already allowlisted above.)
+openclaw-github
 
 # Outlook (Microsoft Graph) MCP provider (M5) - Graph API + MSAL token refresh
 # (device-code consent itself happens in the user's browser on the host, not here).

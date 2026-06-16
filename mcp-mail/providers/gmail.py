@@ -21,6 +21,7 @@ from google_auth_httplib2 import AuthorizedHttp
 
 from attachments import add_to_email
 from auth import get_credentials
+from timeutil import to_local
 
 
 def _http() -> httplib2.Http:
@@ -68,7 +69,7 @@ def search_messages(query: str, max_results: int = 10) -> list[dict]:
         results.append({
             "id": msg["id"],
             "thread_id": msg["threadId"],
-            "date": headers.get("date", ""),
+            "date": to_local(headers.get("date", "")),
             "from_": headers.get("from", ""),
             "subject": headers.get("subject", ""),
             "snippet": msg.get("snippet", ""),

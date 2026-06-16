@@ -31,6 +31,7 @@ from email.message import EmailMessage
 from pathlib import Path
 
 from attachments import add_to_email
+from timeutil import to_local
 
 IMAP_HOST = "imap.mail.me.com"
 IMAP_PORT = 993
@@ -258,7 +259,7 @@ def search_messages(query: str, max_results: int = 10) -> list[dict]:
             results.append({
                 "id": uid.decode(),
                 "thread_id": "",  # IMAP has no portable thread id; omitted in v1
-                "date": _decode(hdr.get("date", "")),
+                "date": to_local(_decode(hdr.get("date", ""))),
                 "from_": _decode(hdr.get("from", "")),
                 "subject": _decode(hdr.get("subject", "")),
                 "snippet": "",  # snippets would cost a body fetch each; skipped in v1
@@ -282,7 +283,7 @@ def get_message(message_id: str, max_chars: int = 20000) -> dict:
         return {
             "id": message_id,
             "thread_id": "",
-            "date": _decode(msg.get("date", "")),
+            "date": to_local(_decode(msg.get("date", ""))),
             "from_": _decode(msg.get("from", "")),
             "to": _decode(msg.get("to", "")),
             "subject": _decode(msg.get("subject", "")),

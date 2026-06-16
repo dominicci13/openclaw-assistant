@@ -30,13 +30,23 @@
                 "toolFilter": {
                     "include": ["list_events", "create_event", "update_event"]
                 }
+            },
+            "github": {
+                "url": "http://openclaw-github:8000/mcp",
+                "transport": "streamable-http",
+                "headers": {
+                    "Authorization": "Bearer ${GITHUB_MCP_BEARER_TOKEN}"
+                },
+                "toolFilter": {
+                    "include": ["list_repos", "get_repo", "list_files", "read_file", "search_code"]
+                }
             }
         }
     },
 
     "tools": {
         "profile": "messaging",
-        "alsoAllow": ["web_fetch", "web_search", "mail__*", "drive__*", "calendar__*"],
+        "alsoAllow": ["web_fetch", "web_search", "mail__*", "drive__*", "calendar__*", "github__*"],
         "deny": ["group:runtime", "group:fs", "group:automation", "sessions_spawn", "sessions_send"],
         "exec": { "mode": "deny" },
         "elevated": { "enabled": false },

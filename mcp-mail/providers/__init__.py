@@ -14,13 +14,15 @@ from __future__ import annotations
 
 from types import ModuleType
 
-from . import gmail, icloud, outlook
+from . import claw, gmail, icloud, outlook
 
-# account name -> provider module
+# account name -> provider module. "claw" is Claw's OWN send-only address
+# (claw.brian.ai@gmail.com) - it only sends (search/get/draft raise there).
 PROVIDERS: dict[str, ModuleType] = {
     "gmail": gmail,
     "outlook": outlook,
     "icloud": icloud,
+    "claw": claw,
 }
 
 

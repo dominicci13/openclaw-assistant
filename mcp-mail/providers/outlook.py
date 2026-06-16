@@ -19,6 +19,7 @@ import requests
 
 from attachments import to_graph
 from auth_outlook import get_token
+from timeutil import to_local
 
 GRAPH = "https://graph.microsoft.com/v1.0"
 
@@ -52,7 +53,7 @@ def search_messages(query: str, max_results: int = 10) -> list[dict]:
         results.append({
             "id": m["id"],
             "thread_id": m.get("conversationId", ""),
-            "date": m.get("receivedDateTime", ""),
+            "date": to_local(m.get("receivedDateTime", "")),
             "from_": frm.get("address", ""),
             "subject": m.get("subject", ""),
             "snippet": m.get("bodyPreview", ""),

@@ -27,7 +27,8 @@ from providers import get_provider
 # Selectable mail accounts. MUST stay in sync with the keys in providers.PROVIDERS;
 # declared as a Literal so the tool schema exposes a clear enum to the model
 # (otherwise it can't tell which accounts exist).
-Account = Literal["gmail", "outlook", "icloud"]
+# "claw" is Claw's OWN send-only address (send_mail only; it can't read/draft).
+Account = Literal["gmail", "outlook", "icloud", "claw"]
 
 mcp = FastMCP(
     "mail",
