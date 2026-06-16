@@ -1,11 +1,9 @@
-"""Outlook (Microsoft Graph) OAuth via MSAL device-code flow.
+"""OneDrive (Microsoft Graph Files) OAuth via MSAL device-code flow.
 
-Run directly ('python auth_outlook.py') ONCE on a machine with a browser to
-mint the account token via device-code consent; the server imports get_token()
-for normal operation. Mirrors auth.py (Gmail).
-
-Device-code flow is headless-friendly: it prints a code + URL, you open the URL
-in any browser and enter the code. No redirect/local server needed.
+Run directly ('python auth_onedrive.py') ONCE on a machine with a browser to mint
+the account token; the server imports get_token() for normal operation. Mirrors
+mcp-mail/auth_outlook.py, but a SEPARATE Azure app + token so drive credentials
+are isolated from mail (a drive compromise can't touch mail, and vice-versa).
 """
 
 from __future__ import annotations
@@ -16,21 +14,16 @@ from pathlib import Path
 
 import msal
 
-# Scopes this server holds for Outlook. Mail.ReadWrite = read + draft; Mail.Send
-# = send (M7 send-with-consent). Send is gated in-app by the per-send TOTP
-# (consent.py) regardless of scope. Delete is permitted by Mail.ReadWrite but
-# blocked at the tool layer (no delete tool). MSAL adds reserved scopes
-# (offline_access/openid/profile) automatically; do not list them here.
-# Changing this list requires a re-mint (delete token_cache.json + re-run) so the
-# granted consent matches.
-SCOPES = ["Mail.ReadWrite", "Mail.Send"]
+# Files.ReadWrite = read + write the user's whole OneDrive (delegated, personal
+# account, no admin consent). The provider exposes NO delete/overwrite path, so
+# the token's write power is constrained to "create new" at the tool layer. MSAL
+# adds reserved scopes (offline_access/openid/profile) automatically.
+SCOPES = ["Files.ReadWrite"]
 
-# Configurable so the same code runs on the Mac (default) and in the container
-# (env points at the mounted secrets dir).
 SECRETS_DIR = Path(
     os.environ.get(
-        "OUTLOOK_SECRETS_DIR",
-        Path(__file__).resolve().parent.parent / "instance" / "outlook",
+        "ONEDRIVE_SECRETS_DIR",
+        Path(__file__).resolve().parent.parent / "instance" / "onedrive",
     )
 )
 CONFIG_FILE = SECRETS_DIR / "config.json"
@@ -38,7 +31,6 @@ CACHE_FILE = SECRETS_DIR / "token_cache.json"
 
 
 def _load_config() -> dict:
-    """Read client_id + authority (client_id is a public identifier, not a secret)."""
     with open(CONFIG_FILE) as f:
         return json.load(f)
 
@@ -70,23 +62,17 @@ def get_token() -> str:
     accounts = app.get_accounts()
     if not accounts:
         raise RuntimeError(
-            "No Outlook account in cache. Run `python auth_outlook.py` once to mint the token."
+            "No OneDrive account in cache. Run `python auth_onedrive.py` once to mint the token."
         )
     result = app.acquire_token_silent(SCOPES, account=accounts[0])
     if not result or "access_token" not in result:
         detail = result.get("error_description", result) if result else "no token in cache"
-        raise RuntimeError(f"Outlook token refresh failed: {detail}")
-    # Best-effort persist a rotated refresh token. In the container /secrets-outlook
-    # is mounted READ-ONLY, so this silently no-ops there (refresh still works in
-    # memory for the process lifetime); on the writable mint host it persists.
-    # KNOWN RISK: MS rotates refresh tokens; if a rotation can't persist (read-only
-    # mount) a later cold start reuses the seed token. Revisit (writable tmpfs cache)
-    # if re-consent starts being required too often.
+        raise RuntimeError(f"OneDrive token refresh failed: {detail}")
     if cache.has_state_changed:
         try:
             CACHE_FILE.write_text(cache.serialize())
         except OSError:
-            pass
+            pass  # /secrets-onedrive is read-only in the container; refresh stays in memory
     return result["access_token"]
 
 
@@ -97,11 +83,10 @@ def mint() -> None:
     flow = app.initiate_device_flow(scopes=SCOPES)
     if "user_code" not in flow:
         raise RuntimeError(f"Device flow init failed: {flow}")
-    print(flow["message"], flush=True)  # "open <url> and enter code <code>"
-    result = app.acquire_token_by_device_flow(flow)  # blocks until consent completes
+    print(flow["message"], flush=True)
+    result = app.acquire_token_by_device_flow(flow)
     if "access_token" not in result:
         raise RuntimeError(f"Mint failed: {result.get('error_description', result)}")
-    # Confirm at birth that no unexpected scope (e.g. Mail.Send) was granted.
     print("Granted scopes:", result.get("scope", "<none reported>"), flush=True)
     SECRETS_DIR.mkdir(parents=True, exist_ok=True)
     CACHE_FILE.write_text(cache.serialize())

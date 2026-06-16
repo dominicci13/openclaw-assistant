@@ -12,7 +12,7 @@ iCloud IMAP needs an APP-SPECIFIC password (the Apple ID password fails under
 squid via a hand-rolled CONNECT-then-TLS socket (cert validation kept, proven in
 B1). With no proxy env (local dev) it connects directly via IMAP4_SSL.
 
-Reads use a READONLY mailbox select so fetching never marks Brian's mail \\Seen.
+Reads use a READONLY mailbox select so fetching never marks the user's mail \\Seen.
 """
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ import imaplib
 import json
 import os
 import re
+import smtplib
 import socket
 import ssl
 from email import message_from_bytes
@@ -29,8 +30,12 @@ from email.header import decode_header, make_header
 from email.message import EmailMessage
 from pathlib import Path
 
+from attachments import add_to_email
+
 IMAP_HOST = "imap.mail.me.com"
 IMAP_PORT = 993
+SMTP_HOST = "smtp.mail.me.com"
+SMTP_PORT = 587  # STARTTLS
 DRAFTS_FOLDER = "Drafts"  # iCloud's Drafts mailbox
 
 SECRETS_DIR = Path(
@@ -308,3 +313,63 @@ def create_draft(to: str, subject: str, body: str, thread_id: str | None = None)
         return {"folder": DRAFTS_FOLDER, "status": typ, "detail": detail}
     finally:
         _safe_logout(conn)
+
+
+class _ProxyTunnelSMTP(smtplib.SMTP):
+    """SMTP that reaches the server through an HTTP CONNECT proxy (squid). smtplib
+    has no proxy support, so we hand-roll CONNECT and hand it the tunneled socket;
+    STARTTLS then upgrades the tunnel to (cert-validated) TLS."""
+
+    def __init__(self, host: str, port: int, proxy_host: str, proxy_port: int, timeout: int = 30):
+        self._proxy = (proxy_host, proxy_port)
+        self._ptimeout = timeout
+        super().__init__(host, port, timeout=timeout)  # connect() -> _get_socket()
+
+    def _get_socket(self, host, port, timeout):
+        raw = socket.create_connection(self._proxy, timeout=self._ptimeout)
+        req = f"CONNECT {host}:{port} HTTP/1.1\r\nHost: {host}:{port}\r\n\r\n"
+        raw.sendall(req.encode())
+        resp = b""
+        while b"\r\n\r\n" not in resp:
+            chunk = raw.recv(4096)
+            if not chunk:
+                break
+            resp += chunk
+        status = resp.split(b"\r\n", 1)[0].decode("latin1")
+        if "200" not in status:
+            raw.close()
+            raise OSError(f"proxy CONNECT to {host}:{port} failed: {status}")
+        return raw
+
+
+def send_message(to: str, subject: str, body: str, thread_id: str | None = None,
+                 attachments: list[dict] | None = None) -> dict:
+    """SEND via iCloud SMTP (smtp.mail.me.com:587, STARTTLS) over the same
+    CONNECT-tunnel pattern as the IMAP read path. Send is gated in-app by the
+    per-send consent TOTP (main.py). thread_id unused (no SMTP threading)."""
+    cfg = _load_config()
+    mime = EmailMessage()
+    mime["From"] = cfg["email"]
+    mime["To"] = to
+    mime["Subject"] = subject
+    mime.set_content(body)
+    add_to_email(mime, attachments)
+
+    proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY")
+    if proxy:
+        ph, pp = _parse_proxy(proxy)
+        smtp: smtplib.SMTP = _ProxyTunnelSMTP(SMTP_HOST, SMTP_PORT, ph, pp)
+    else:
+        smtp = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30)
+    try:
+        smtp.ehlo()
+        smtp.starttls(context=ssl.create_default_context())  # cert-validated upgrade
+        smtp.ehlo()
+        smtp.login(cfg["email"], cfg["app_password"])
+        smtp.send_message(mime)
+        return {"status": "sent", "to": to}
+    finally:
+        try:
+            smtp.quit()
+        except Exception:
+            pass

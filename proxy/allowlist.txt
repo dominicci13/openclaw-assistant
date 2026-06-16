@@ -3,22 +3,70 @@
 .telegram.org
 .tavily.com
 
-# web_fetch content domains — start tiny, grow via the "ask Brian" flow.
+# web_fetch content domains — start tiny, grow via the "ask the user" flow.
 .wikipedia.org
+
+# Shopping + flights (added 2026-06-16 at the user's request, for the demo). CAVEAT: these are
+# heavily JS-rendered + bot-hostile, so web_fetch (no JS, no browser fingerprint) often gets
+# blocked or returns no prices — web_search (Tavily) is the better source until the BROWSER
+# milestone. Main domains only (web_fetch loads no sub-resources; the browser milestone will
+# also need their CDN/asset hosts).
+.kayak.com
+.amazon.com
+.ebay.com
+.walmart.com
 
 # Gmail MCP sidecar (M4) â Gmail API + OAuth token refresh.
 .googleapis.com
+# (.googleapis.com ALSO serves the Google DRIVE provider, M6 Phase B: Drive API
+# v3 at www.googleapis.com + oauth2.googleapis.com token refresh - same
+# scope-limited Google stack as Gmail.)
+
+# Google Drive file DOWNLOADS can 302-redirect to a content host (large files /
+# get_media). Personal Drive serves those bytes from *.googleusercontent.com.
+# Needed by the Drive sidecar (M6 Phase B) to read file contents.
+.googleusercontent.com
 
 # The MCP sidecar itself (M4). OpenClaw forces gateway->sidecar through squid
 # (it clears NO_PROXY), so the gateway can only reach it if allowlisted -
 # one chokepoint, default-deny, even for internal RPC. Exact single-label host.
 openclaw-gmail
 
+# The Drive MCP sidecar (M6) — same chokepoint reason as the mail sidecar.
+openclaw-drive
+
+# The Calendar MCP sidecar — same chokepoint reason (gateway->sidecar via squid).
+openclaw-calendar
+
 # Outlook (Microsoft Graph) MCP provider (M5) - Graph API + MSAL token refresh
-# (device-code consent itself happens in Brian's browser on the host, not here).
+# (device-code consent itself happens in the user's browser on the host, not here).
 login.microsoftonline.com
 graph.microsoft.com
+
+# OneDrive file DOWNLOAD redirects to a content-delivery host (Graph /content -> 302).
+# Personal OneDrive serves bytes from *.microsoftpersonalcontent.com (and classic
+# *.1drv.com). Needed by the Drive sidecar (M6) to read file contents.
+.microsoftpersonalcontent.com
+.1drv.com
 
 # iCloud IMAP MCP provider (M5 Phase B) - IMAPS over a hand-rolled CONNECT tunnel
 # through squid (imaplib won't use an HTTP proxy itself). Port 993 (see squid.conf).
 imap.mail.me.com
+
+# iCloud SMTP send (M7 Phase B3) - STARTTLS to smtp.mail.me.com:587 over a CONNECT
+# tunnel (smtplib has no proxy support either).
+smtp.mail.me.com
+
+# iCloud Calendar via CalDAV (calendar milestone Phase C) - HTTPS, so the caldav
+# library proxies natively through squid. Discovery from caldav.icloud.com redirects
+# to a per-partition host (pNN-caldav.icloud.com, e.g. p120-...; the number varies),
+# so allowlist the whole suffix. Leading dot = apex + all subdomains. Read+create+
+# update events; no delete.
+.caldav.icloud.com
+
+# OpenAI Whisper / gpt-4o-transcribe (STT milestone) - inbound Telegram voice notes
+# are transcribed via api.openai.com/v1/audio/transcriptions. This is the one third
+# party that receives user CONTENT (voice audio) rather than being a user-owned
+# destination - a deliberate, logged tradeoff. Built-in preflight transcription, not
+# a tool; transcript is injected to the model tagged machine-generated/untrusted.
+api.openai.com

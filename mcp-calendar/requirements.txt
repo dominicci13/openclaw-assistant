@@ -1,0 +1,16 @@
+# Pinned (matches the mail/drive sidecars' known-good stack). mcp + uvicorn (server);
+# Google Calendar (google-api-python-client + google-auth* + httplib2 + PySocks, Calendar
+# API v3 over a squid-proxied httplib2); Outlook/Graph Calendar (msal device-code +
+# requests, honors HTTPS_PROXY). iCloud (icalendar/CalDAV) deps get added in a later phase.
+mcp==1.27.2
+uvicorn==0.49.0
+google-api-python-client==2.197.0
+google-auth==2.54.0
+google-auth-oauthlib==1.4.0
+google-auth-httplib2==0.4.0
+httplib2==0.31.2
+PySocks==1.7.1
+msal==1.37.0
+requests==2.34.2
+caldav==1.6.0
+icalendar==6.3.1

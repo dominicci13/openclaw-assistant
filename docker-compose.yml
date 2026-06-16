@@ -48,6 +48,13 @@ services:
       # resolves ${GMAIL_MCP_BEARER_TOKEN} in openclaw.json (mcp.servers.gmail
       # .headers.Authorization) and sends it on every MCP request.
       GMAIL_MCP_BEARER_TOKEN: ${GMAIL_MCP_BEARER_TOKEN}
+      # Same, for the Drive sidecar (mcp.servers.drive.headers.Authorization).
+      DRIVE_MCP_BEARER_TOKEN: ${DRIVE_MCP_BEARER_TOKEN}
+      # Same, for the Calendar sidecar (mcp.servers.calendar.headers.Authorization).
+      CALENDAR_MCP_BEARER_TOKEN: ${CALENDAR_MCP_BEARER_TOKEN}
+      # OpenAI key for inbound voice transcription (STT). OpenClaw's media preflight
+      # reads OPENAI_API_KEY from the env; egress to api.openai.com goes via squid.
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
     volumes:
       - ./instance/config:/home/node/.openclaw
       - ./instance/workspace:/home/node/.openclaw/workspace
@@ -106,9 +113,10 @@ services:
       OPENCLAW_WORKSPACE_DIR: /home/node/.openclaw/workspace
       BROWSER: echo
       TZ: America/Santo_Domingo
-      # Resolve the sidecar bearer ref too, so config loads without the noisy
-      # "missing env var" warning (cosmetic for the CLI; it never calls the sidecar).
+      # Resolve the sidecar bearer refs too, so config loads without the noisy
+      # "missing env var" warning (cosmetic for the CLI; it never calls a sidecar).
       GMAIL_MCP_BEARER_TOKEN: ${GMAIL_MCP_BEARER_TOKEN}
+      DRIVE_MCP_BEARER_TOKEN: ${DRIVE_MCP_BEARER_TOKEN}
     volumes:
       - ./instance/config:/home/node/.openclaw
       - ./instance/workspace:/home/node/.openclaw/workspace
@@ -195,6 +203,13 @@ services:
       MCP_PORT: "8000"
       GMAIL_SECRETS_DIR: /secrets
       OUTLOOK_SECRETS_DIR: /secrets-outlook
+      # Per-send consent gate (M7): TOTP secret, model never sees it. Single
+      # source = repo-root .env. The sidecar verifies a fresh code before send.
+      SEND_TOTP_SECRET: ${SEND_TOTP_SECRET}
+      # The user's own addresses (comma-separated). A send addressed ONLY to these
+      # skips the TOTP (self-sends can't exfiltrate/impersonate). Any external
+      # recipient still requires the code. Model can't edit this list.
+      OWN_EMAIL_ADDRESSES: ${OWN_EMAIL_ADDRESSES}
       ICLOUD_SECRETS_DIR: /secrets-icloud
       HTTP_PROXY: http://openclaw-proxy:3128
       HTTPS_PROXY: http://openclaw-proxy:3128
@@ -218,6 +233,99 @@ services:
     security_opt:
       - no-new-privileges:true
     read_only: true
+    tmpfs:
+      # openpyxl spools to a temp file when building .xlsx attachments (send_mail
+      # excel_attachments); the read-only rootfs needs a writable in-memory /tmp.
+      - /tmp
+    mem_limit: 512m
+    cpus: 1
+    init: true
+    restart: unless-stopped
+    depends_on:
+      openclaw-proxy:
+        condition: service_healthy
+
+  openclaw-drive:
+    # Self-built Drive MCP sidecar (mcp-drive/). Read + create only (no delete, no
+    # overwrite). SEPARATE from the mail sidecar: holds only its own OneDrive OAuth
+    # token, never mail creds. Same hardening posture; egress only via squid.
+    build: ./mcp-drive
+    image: openclaw-drive:0.1
+    container_name: openclaw-drive
+    networks:
+      - openclaw-internal
+    environment:
+      MCP_TRANSPORT: streamable-http
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: "8000"
+      ONEDRIVE_SECRETS_DIR: /secrets-onedrive
+      HTTP_PROXY: http://openclaw-proxy:3128
+      HTTPS_PROXY: http://openclaw-proxy:3128
+      NO_PROXY: localhost,127.0.0.1,::1
+      # Bearer auth for the gateway->drive MCP endpoint (root .env single source).
+      DRIVE_MCP_BEARER_TOKEN: ${DRIVE_MCP_BEARER_TOKEN}
+    volumes:
+      # OneDrive (Graph Files) token, read-only. Only this container ever sees it.
+      - ./instance/onedrive:/secrets-onedrive:ro
+      # Google Drive token (separate Google OAuth client), read-only. Isolated
+      # from OneDrive's creds and from the mail sidecar entirely.
+      - ./instance/gdrive:/secrets-gdrive:ro
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      # openpyxl/python-docx spool to a temp file while building Office files;
+      # the read-only rootfs needs a writable in-memory /tmp for that.
+      - /tmp
+    mem_limit: 512m
+    cpus: 1
+    init: true
+    restart: unless-stopped
+    depends_on:
+      openclaw-proxy:
+        condition: service_healthy
+
+  openclaw-calendar:
+    # Self-built Calendar MCP sidecar (mcp-calendar/). Read + create + update only
+    # (NO delete, no external invites). SEPARATE from mail + drive: holds only its
+    # own per-calendar OAuth tokens, never mail/drive creds. Same hardening posture;
+    # egress only via squid.
+    build: ./mcp-calendar
+    image: openclaw-calendar:0.1
+    container_name: openclaw-calendar
+    networks:
+      - openclaw-internal
+    environment:
+      MCP_TRANSPORT: streamable-http
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: "8000"
+      GCAL_SECRETS_DIR: /secrets-gcal
+      CALENDAR_DEFAULT_TZ: America/Santo_Domingo
+      HTTP_PROXY: http://openclaw-proxy:3128
+      HTTPS_PROXY: http://openclaw-proxy:3128
+      NO_PROXY: localhost,127.0.0.1,::1
+      # Bearer auth for the gateway->calendar MCP endpoint (root .env single source).
+      CALENDAR_MCP_BEARER_TOKEN: ${CALENDAR_MCP_BEARER_TOKEN}
+    volumes:
+      # Google Calendar token (its own OAuth client), read-only. Isolated from the
+      # mail + drive sidecars entirely.
+      - ./instance/gcal:/secrets-gcal:ro
+      # Outlook/Graph Calendar token (its own Azure app, separate from Outlook mail),
+      # read-only.
+      - ./instance/mscal:/secrets-mscal:ro
+      # iCloud Calendar (CalDAV) app-specific password, read-only. Separate from the
+      # iCloud MAIL app password (independent revocation; same blast radius is inherent
+      # to iCloud app passwords being all-or-nothing).
+      - ./instance/icloudcal:/secrets-icloudcal:ro
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
     mem_limit: 512m
     cpus: 1
     init: true

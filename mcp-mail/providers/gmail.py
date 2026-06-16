@@ -19,6 +19,7 @@ from email.message import EmailMessage
 from googleapiclient.discovery import build
 from google_auth_httplib2 import AuthorizedHttp
 
+from attachments import add_to_email
 from auth import get_credentials
 
 
@@ -121,3 +122,21 @@ def create_draft(to: str, subject: str, body: str, thread_id: str | None = None)
 
     draft = _gmail().users().drafts().create(userId="me", body=payload).execute()
     return {"draft_id": draft["id"], "message_id": draft["message"]["id"]}
+
+
+def send_message(to: str, subject: str, body: str, thread_id: str | None = None,
+                 attachments: list[dict] | None = None) -> dict:
+    """SEND an email via Gmail. The consent TOTP is enforced upstream (main.py);
+    the gmail.compose scope permits send (verified M4)."""
+    mime = EmailMessage()
+    mime["To"] = to
+    mime["Subject"] = subject
+    mime.set_content(body)
+    add_to_email(mime, attachments)
+
+    payload: dict = {"raw": base64.urlsafe_b64encode(mime.as_bytes()).decode()}
+    if thread_id:
+        payload["threadId"] = thread_id
+
+    sent = _gmail().users().messages().send(userId="me", body=payload).execute()
+    return {"id": sent["id"], "thread_id": sent.get("threadId", "")}

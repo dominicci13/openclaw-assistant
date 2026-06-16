@@ -8,7 +8,27 @@
                     "Authorization": "Bearer ${GMAIL_MCP_BEARER_TOKEN}"
                 },
                 "toolFilter": {
-                    "include": ["search_messages", "get_message", "create_draft"]
+                    "include": ["search_messages", "get_message", "create_draft", "send_mail"]
+                }
+            },
+            "drive": {
+                "url": "http://openclaw-drive:8000/mcp",
+                "transport": "streamable-http",
+                "headers": {
+                    "Authorization": "Bearer ${DRIVE_MCP_BEARER_TOKEN}"
+                },
+                "toolFilter": {
+                    "include": ["list_files", "read_file", "write_file", "create_excel", "create_doc", "create_folder", "download_file"]
+                }
+            },
+            "calendar": {
+                "url": "http://openclaw-calendar:8000/mcp",
+                "transport": "streamable-http",
+                "headers": {
+                    "Authorization": "Bearer ${CALENDAR_MCP_BEARER_TOKEN}"
+                },
+                "toolFilter": {
+                    "include": ["list_events", "create_event", "update_event"]
                 }
             }
         }
@@ -16,13 +36,21 @@
 
     "tools": {
         "profile": "messaging",
-        "alsoAllow": ["web_fetch", "web_search", "mail__*"],
+        "alsoAllow": ["web_fetch", "web_search", "mail__*", "drive__*", "calendar__*"],
         "deny": ["group:runtime", "group:fs", "group:automation", "sessions_spawn", "sessions_send"],
         "exec": { "mode": "deny" },
         "elevated": { "enabled": false },
         "fs": { "workspaceOnly": true },
+        "media": {
+            "audio": {
+                "enabled": true,
+                "models": [
+                    { "provider": "openai", "model": "gpt-4o-transcribe" }
+                ]
+            }
+        },
         "web": {
-            "search": { "provider": "tavily", "maxResults": 5, "timeoutSeconds": 30 },
+            "search": { "provider": "tavily", "maxResults": 10, "timeoutSeconds": 30 },
             "fetch": { "maxChars": 10000, "timeoutSeconds": 30, "useTrustedEnvProxy": true }
         }
     },
@@ -35,6 +63,7 @@
         "telegram": {
             "enabled": true,
             "botToken": "${TELEGRAM_BOT_TOKEN}",
+            "proxy": "http://openclaw-proxy:3128",
             "dmPolicy": "allowlist",
             "allowFrom": ["YOUR_TELEGRAM_USER_ID"],
             "groupPolicy": "disabled",
@@ -49,9 +78,16 @@
     "agents": {
         "defaults": {
             "workspace": "~/.openclaw/workspace",
+            "timeoutSeconds": 600,
             "model": {
                 "primary": "anthropic/claude-sonnet-4-6"
             }
+        }
+    },
+
+    "models": {
+        "providers": {
+            "anthropic": { "timeoutSeconds": 240 }
         }
     },
 

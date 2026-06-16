@@ -9,7 +9,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY auth.py auth_outlook.py main.py ./
+COPY auth.py auth_outlook.py consent.py attachments.py main.py ./
 COPY providers ./providers
 
 USER appuser

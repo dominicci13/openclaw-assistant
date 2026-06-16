@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import requests
 
+from attachments import to_graph
 from auth_outlook import get_token
 
 GRAPH = "https://graph.microsoft.com/v1.0"
@@ -110,3 +111,26 @@ def create_draft(to: str, subject: str, body: str, thread_id: str | None = None)
     m = r.json()
     # Graph uses one id for the draft message (no separate draft/message ids like Gmail).
     return {"draft_id": m["id"], "message_id": m["id"]}
+
+
+def send_message(to: str, subject: str, body: str, thread_id: str | None = None,
+                 attachments: list[dict] | None = None) -> dict:
+    """SEND via Outlook (Graph /me/sendMail). Requires the Mail.Send scope (M7 B2);
+    send itself is gated in-app by the per-send consent TOTP (main.py). thread_id
+    is not used in v1 (Outlook reply-threading is a later refinement)."""
+    message: dict = {
+        "subject": subject,
+        "body": {"contentType": "Text", "content": body},
+        "toRecipients": [
+            {"emailAddress": {"address": addr.strip()}}
+            for addr in to.split(",")
+            if addr.strip()
+        ],
+    }
+    graph_atts = to_graph(attachments)
+    if graph_atts:
+        message["attachments"] = graph_atts
+    payload = {"message": message, "saveToSentItems": True}
+    r = _session().post(f"{GRAPH}/me/sendMail", json=payload, timeout=30)
+    r.raise_for_status()  # /me/sendMail returns 202 Accepted, no body
+    return {"status": "sent", "http_status": r.status_code}
