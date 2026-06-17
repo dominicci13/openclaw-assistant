@@ -22,6 +22,32 @@ api.github.com
 .ebay.com
 .walmart.com
 
+# Airlines (BROWSER milestone, added at the user's request 2026-06-16) - public fare
+# + schedule browsing with the real Chromium sidecar. Routes the user actually flies:
+# DR <-> Spain/Europe + US/Latam connections. SCOPE: public browsing only (check fares,
+# schedules, availability) - NOT login, booking, or payment (milestone boundary).
+# CAVEATS, expect to revisit: (1) a real browser pulls sub-resources from MANY hosts
+# (CDNs, booking-engine + payment APIs); these are MAIN domains only, so booking flows
+# may render partially until the asset hosts that show up as TCP_DENIED in
+# instance/logs/squid/access.log are added. (2) Airline sites run aggressive bot
+# protection (Akamai/DataDome), so automated navigation may still be challenged.
+.iberia.com
+.arajet.com
+.world2fly.com
+.aireuropa.com
+.iberojet.com
+.plusultra.com
+.vueling.com
+.ryanair.com
+.easyjet.com
+.flytap.com
+.aa.com
+.jetblue.com
+.copaair.com
+.avianca.com
+.delta.com
+.united.com
+
 # Gmail MCP sidecar (M4) â Gmail API + OAuth token refresh.
 .googleapis.com
 # (.googleapis.com ALSO serves the Google DRIVE provider, M6 Phase B: Drive API
@@ -47,6 +73,12 @@ openclaw-calendar
 # The GitHub MCP sidecar — same chokepoint reason (gateway->sidecar via squid).
 # (api.github.com, the only external host it reaches, is already allowlisted above.)
 openclaw-github
+
+# The browser CDP sidecar (BROWSER milestone). The gateway's remote-CDP connection
+# is NON-loopback, so OpenClaw routes it through squid (no proxy bypass) - the relay
+# host must be allowlisted like the other gateway->sidecar hops. Plain HTTP on port
+# 18792 (the /json/version probe + the WebSocket upgrade). Holds NO credentials.
+openclaw-browser
 
 # Outlook (Microsoft Graph) MCP provider (M5) - Graph API + MSAL token refresh
 # (device-code consent itself happens in the user's browser on the host, not here).

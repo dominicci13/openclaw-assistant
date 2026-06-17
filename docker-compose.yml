@@ -12,10 +12,19 @@ services:
     container_name: openclaw-gateway
     networks:
       - openclaw-internal
+    # Resolve through the DNS-only forwarder (name resolution without egress), with
+    # Docker's embedded resolver as fallback so sidecar service-name lookups still
+    # work if the forwarder is ever down (external browsing degrades, core stays up).
+    dns:
+      - 172.19.0.53
+      - 127.0.0.11
     # proxy.enabled is fail-closed: the gateway must reach the egress proxy at
-    # startup, so wait until squid is healthy before starting.
+    # startup, so wait until squid is healthy before starting. The DNS forwarder is
+    # on the resolve path too, so wait for it as well.
     depends_on:
       openclaw-proxy:
+        condition: service_healthy
+      openclaw-dns:
         condition: service_healthy
     # Load the same secrets file OpenClaw reads, as REAL container env vars at
     # startup. Bundled keyed web-search providers (e.g. tavily, which declares
@@ -54,6 +63,10 @@ services:
       CALENDAR_MCP_BEARER_TOKEN: ${CALENDAR_MCP_BEARER_TOKEN}
       # Same, for the GitHub sidecar (mcp.servers.github.headers.Authorization).
       GITHUB_MCP_BEARER_TOKEN: ${GITHUB_MCP_BEARER_TOKEN}
+      # Relay token for the browser CDP endpoint. OpenClaw resolves
+      # ${BROWSER_CDP_AUTH_TOKEN} inside openclaw.json (browser.profiles.relay.cdpUrl
+      # userinfo) and sends it as HTTP Basic to the relay on each CDP request.
+      BROWSER_CDP_AUTH_TOKEN: ${BROWSER_CDP_AUTH_TOKEN}
       # OpenAI key for inbound voice transcription (STT). OpenClaw's media preflight
       # reads OPENAI_API_KEY from the env; egress to api.openai.com goes via squid.
       OPENAI_API_KEY: ${OPENAI_API_KEY}
@@ -119,6 +132,7 @@ services:
       # "missing env var" warning (cosmetic for the CLI; it never calls a sidecar).
       GMAIL_MCP_BEARER_TOKEN: ${GMAIL_MCP_BEARER_TOKEN}
       DRIVE_MCP_BEARER_TOKEN: ${DRIVE_MCP_BEARER_TOKEN}
+      BROWSER_CDP_AUTH_TOKEN: ${BROWSER_CDP_AUTH_TOKEN}
     volumes:
       - ./instance/config:/home/node/.openclaw
       - ./instance/workspace:/home/node/.openclaw/workspace
@@ -380,10 +394,98 @@ services:
       openclaw-proxy:
         condition: service_healthy
 
+  openclaw-browser:
+    # Hardened headless-Chromium CDP sidecar (browser/). Renders JS pages and
+    # automates PUBLIC sites only - NO credentials, NO secret mounts. Chromium
+    # binds loopback; a token + source-range relay is the only thing on the
+    # network, and ALL page egress is forced through squid (--proxy-server in the
+    # entrypoint). Heaviest attack surface in the project -> treated as untrusted,
+    # contained by the internal net + relay auth + hardened container. Joins the
+    # weekly audit. The gateway reaches it by service name; the relay rewrites the
+    # forwarded Host header to loopback so Chrome's DNS-rebinding guard accepts it.
+    build: ./browser
+    image: openclaw-browser:0.1
+    container_name: openclaw-browser
+    networks:
+      - openclaw-internal
+    environment:
+      # Relay auth (root .env single source); the gateway sends the matching token
+      # as cdpUrl userinfo -> HTTP Basic. Missing token = fail-closed (won't start).
+      OPENCLAW_BROWSER_CDP_AUTH_TOKEN: ${BROWSER_CDP_AUTH_TOKEN}
+      # Optional extra layer: restrict which source IPs the relay accepts. Empty by
+      # default - internal:true net + zero published ports + the token are the
+      # gates. Set a CIDR (once a subnet is pinned) to tighten further.
+      OPENCLAW_BROWSER_CDP_SOURCE_RANGE: ${BROWSER_CDP_SOURCE_RANGE:-}
+      # Chromium routes every page fetch through squid (our egress chokepoint).
+      BROWSER_PROXY_URL: http://openclaw-proxy:3128
+    # NO volumes: this sidecar holds no credentials at all.
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    mem_limit: 1g
+    cpus: 1
+    init: true
+    restart: unless-stopped
+    depends_on:
+      openclaw-proxy:
+        condition: service_healthy
+
+  openclaw-dns:
+    # DNS-only forwarder (dns/). The gateway is internal:true with no external DNS,
+    # but OpenClaw's browser navigation guard resolves the target hostname in the
+    # gateway process. This gives the gateway name resolution WITHOUT egress: it
+    # forwards to Docker's embedded resolver (127.0.0.11), which resolves internal
+    # service names and - because this container is also on egress - external names.
+    # The gateway still ROUTES only through squid. Static IP so the gateway's
+    # resolv.conf can point at it. Navigation is allowlist-gated BEFORE the resolve,
+    # so the gateway only ever resolves allowlisted domains. Holds NO credentials.
+    build: ./dns
+    image: openclaw-dns:0.1
+    container_name: openclaw-dns
+    networks:
+      openclaw-internal:
+        ipv4_address: 172.19.0.53
+      openclaw-egress:
+    cap_drop:
+      - ALL
+    cap_add:
+      # NET_BIND_SERVICE: bind privileged port 53. SETUID/SETGID: dnsmasq starts as
+      # root to bind, then drops to its own unprivileged user (fails closed without).
+      - NET_BIND_SERVICE
+      - SETUID
+      - SETGID
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /run
+    mem_limit: 128m
+    cpus: 0.5
+    init: true
+    restart: unless-stopped
+    healthcheck:
+      # Prove the forwarder actually resolves a service name through itself.
+      test: ["CMD", "host", "-W", "2", "openclaw-proxy", "172.19.0.53"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
 networks:
   # Gateway lives ONLY here. internal: true = Docker attaches no route to the
-  # outside world; the proxy is the sole bridge between this net and the internet.
+  # outside world. Two dual-homed bridges cross to the internet: openclaw-proxy
+  # (ALL HTTP egress, audited+allowlisted) and openclaw-dns (DNS resolution ONLY,
+  # so the gateway can resolve hostnames for the browser SSRF pin without gaining
+  # egress). Subnet is PINNED so openclaw-dns can hold a static resolver IP.
   openclaw-internal:
     internal: true
-  # Internet-facing side. Proxy only.
+    ipam:
+      config:
+        - subnet: 172.19.0.0/16
+  # Internet-facing side. Proxy + DNS forwarder only.
   openclaw-egress:

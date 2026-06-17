@@ -46,7 +46,7 @@
 
     "tools": {
         "profile": "messaging",
-        "alsoAllow": ["web_fetch", "web_search", "mail__*", "drive__*", "calendar__*", "github__*"],
+        "alsoAllow": ["web_fetch", "web_search", "mail__*", "drive__*", "calendar__*", "github__*", "browser"],
         "deny": ["group:runtime", "group:fs", "group:automation", "sessions_spawn", "sessions_send"],
         "exec": { "mode": "deny" },
         "elevated": { "enabled": false },
@@ -62,6 +62,21 @@
         "web": {
             "search": { "provider": "tavily", "maxResults": 10, "timeoutSeconds": 30 },
             "fetch": { "maxChars": 10000, "timeoutSeconds": 30, "useTrustedEnvProxy": true }
+        }
+    },
+
+    "browser": {
+        "enabled": true,
+        "defaultProfile": "relay",
+        "profiles": {
+            "relay": {
+                "cdpUrl": "http://openclaw:${BROWSER_CDP_AUTH_TOKEN}@openclaw-browser:18792",
+                "color": "#FF4500"
+            }
+        },
+        "ssrfPolicy": {
+            "allowedHostnames": ["openclaw-browser"],
+            "hostnameAllowlist": ["openclaw-browser", "example.com", "*.example.com"]
         }
     },
 
