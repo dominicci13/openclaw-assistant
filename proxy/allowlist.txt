@@ -48,6 +48,14 @@ api.github.com
 .delta.com
 .united.com
 
+# Google Flights (added 2026-06-17 at the user's request). CAVEAT: this opens www.google.com -
+# Google's main domain incl. search - to the browser, because squid filters by DOMAIN not path, so
+# it's broader than a single airline (accepted: reputable destination). Navigation is still gated
+# app-side (browser ssrf hostnameAllowlist) to www.google.com / google.com only - NOT
+# accounts.google.com, so no login pages. .gstatic.com serves the page assets.
+www.google.com
+.gstatic.com
+
 # Gmail MCP sidecar (M4) â Gmail API + OAuth token refresh.
 .googleapis.com
 # (.googleapis.com ALSO serves the Google DRIVE provider, M6 Phase B: Drive API
