@@ -12,6 +12,12 @@ delete/overwrite tools, a per-send consent gate, and prompt-injection defense in
 credentials it touches are the real crown jewels, so the design optimizes for *containing a
 compromised model*, not just shipping features.
 
+## Demo
+
+A 60-second walkthrough: I ask Claw who it is and what it can do, then hand it a real task (compare flights, build a spreadsheet, email it to me), and finally ask it to send that to an outsider and to delete a message. It does the work, then stops at the lines it won't cross without me: an external send needs a one-time code, and it has no delete tool at all.
+
+https://github.com/user-attachments/assets/89f6a026-3c1c-4acb-a37d-d5691b0aa0af
+
 ## Security model
 
 - **Containment.** Docker, non-root, read-only rootfs, dropped capabilities, no host Docker
