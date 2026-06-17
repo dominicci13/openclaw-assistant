@@ -6,33 +6,11 @@ over Telegram (and locally via Claude Desktop). Built **security-first** and loc
 moved to a VPS without rewrites.
 
 This repo doubles as a portfolio piece: how you bolt real capabilities — mail, cloud drives,
-calendars, and read-only GitHub access — onto an always-on agent while **treating the model as
-potentially hijackable**. Least-privilege scopes, a single audited egress chokepoint, no
+calendars, read-only GitHub, and a real web browser — onto an always-on agent while **treating
+the model as potentially hijackable**. Least-privilege scopes, a single audited egress chokepoint, no
 delete/overwrite tools, a per-send consent gate, and prompt-injection defense in depth. The
 credentials it touches are the real crown jewels, so the design optimizes for *containing a
 compromised model*, not just shipping features.
-
-## Status
-
-- **M1 — Hardened gateway:** OpenClaw in Docker (non-root, read-only rootfs, dropped caps, **zero
-  published ports**); Telegram allowlisted to a single operator; all risky tool groups denied.
-- **M2 — Web (read-only):** `web_search` + `web_fetch` behind a default-DENY domain allowlist.
-- **M3 — Network chokepoint:** the gateway has no egress of its own; **all** outbound is forced
-  through a Squid proxy (fail-closed — no proxy, no internet).
-- **M4–M5 — Mail (Gmail · Outlook · iCloud):** one multi-provider sidecar, three accounts, read +
-  draft; bearer-authed; a scheduled morning brief over Telegram; also wired to Claude Desktop.
-- **M6 — Drive (OneDrive · Google Drive):** a second isolated sidecar — read + create files,
-  spreadsheets, and docs; **never** overwrites or deletes.
-- **M7 — Send-with-consent:** mail can now send, gated by a per-send TOTP code for any external
-  recipient (self-sends skip it); attachments are built server-side and ride the same gate.
-- **Calendar (Google · Outlook · iCloud):** a third isolated sidecar — read + create + update
-  events on your own calendars; **no delete, no attendees, zero outbound invites**.
-- **Vision & voice:** Claw sees images/photos and hears voice notes (auto-transcribed); both are
-  treated as untrusted data, never instructions.
-- **M8 — VPS:** the whole stack migrated to a hardened VPS (SSH key-only, ufw default-deny,
-  unattended-upgrades, fail2ban) — same compose, same isolation.
-- **GitHub (read-only):** a fourth isolated sidecar — list/read repos and files, search code;
-  no write/push/delete path exists.
 
 ## Security model
 
@@ -47,6 +25,11 @@ compromised model*, not just shipping features.
 - **No destructive tools.** There is **no delete tool anywhere** (mail, drive, calendar, GitHub)
   and drives never overwrite — "modify" is read + create-new. Calendar update-in-place is the one
   logged exception.
+- **Browsing is contained and public-only.** A separate headless-Chromium sidecar renders
+  JS-heavy pages; it holds **no credentials**, its remote-control port is token-gated and reachable
+  only by the gateway, and every page fetch still passes the egress allowlist. Scope is deliberately
+  public — Claw browses to *read* (fares, schedules, prices), not to log into accounts or submit
+  forms. A DNS-only forwarder lets the gateway *resolve* hostnames without gaining any new route out.
 - **Consent gate on the only outward action.** Sending mail to an external recipient requires a
   fresh TOTP code the model never sees; self-sends are exempt.
 - **Prompt-injection defense in depth.** (1) system-prompt rule — ingested content (emails, web
@@ -75,22 +58,26 @@ Spreadsheet attachments are built server-side from data (the model never base64-
 
 ```
                        ┌─► mail sidecar     (Gmail · Outlook · iCloud · Claw send-only)
-Telegram ─► openclaw-  │
- (you)     gateway ────┼─► drive sidecar    (OneDrive · Google Drive)
-           (Claude)    │
-              │        ├─► calendar sidecar (Google · Outlook · iCloud)
-              │        │
-              │        └─► github sidecar   (read-only: repos, files, code search)
-              │                                      │
-              └──────── all egress (incl. the RPC above) ─► openclaw-proxy (Squid)
-                                                            default-DENY allowlist ─► internet
+Telegram ─► openclaw-  ├─► drive sidecar    (OneDrive · Google Drive)
+ (you)     gateway ────┼─► calendar sidecar (Google · Outlook · iCloud)
+           (Claude)    ├─► github sidecar   (read-only: repos, files, code search)
+              │        └─► browser sidecar  (headless Chromium — public pages only)
+              │
+              │  name lookups ─► dns forwarder   (resolves names; grants the gateway no egress)
+              │
+              └─ all egress (incl. the RPC above) ─► openclaw-proxy (Squid)
+                                                     default-DENY allowlist ─► internet
 ```
 
 - **openclaw-gateway** — the OpenClaw agent (Claude). Holds **no** provider credentials.
 - **openclaw-proxy** — Squid; the sole route out; default-DENY allowlist + audit log.
-- **Four isolated sidecars** (`mcp-mail/`, `mcp-drive/`, `mcp-calendar/`, `mcp-github/`) — each a
-  self-built Python MCP server, bearer-authed, holding only its own credentials. The mail sidecar
+- **Four isolated MCP sidecars** (`mcp-mail/`, `mcp-drive/`, `mcp-calendar/`, `mcp-github/`) — each
+  a self-built Python MCP server, bearer-authed, holding only its own credentials. The mail sidecar
   also speaks stdio for Claude Desktop.
+- **openclaw-browser** (`browser/`) — a hardened headless-Chromium sidecar the gateway drives over
+  a token-gated remote-CDP endpoint; holds no credentials, all its egress forced through the proxy.
+- **openclaw-dns** (`dns/`) — a DNS-only forwarder so the gateway can resolve hostnames (required
+  for the browser's SSRF checks) without being granted any route to the internet.
 
 ## Quick start
 
@@ -108,19 +95,21 @@ cp instance/config/openclaw.json.example instance/config/openclaw.json  # set yo
 #   instance/{gcal,mscal,icloudcal}/            calendar
 #   instance/github/token                       a fine-grained, READ-ONLY GitHub PAT
 
-docker compose up -d        # gateway + squid proxy + four sidecars
+docker compose up -d        # gateway + squid + dns forwarder + five sidecars
 ```
 
 ## Layout
 
 | Path | Role |
 |---|---|
-| `docker-compose.yml` | Gateway + Squid proxy + four sidecars; the hardening lives here |
+| `docker-compose.yml` | Gateway + Squid + DNS forwarder + five sidecars; the hardening lives here |
 | `proxy/squid.conf` · `proxy/allowlist.txt` | Egress chokepoint: config + default-DENY allowlist |
 | `mcp-mail/` | Mail MCP server: 3 accounts + Claw send-only, send-with-consent, attachments |
 | `mcp-drive/` | Drive MCP server: OneDrive + Google Drive, read + create (no delete/overwrite) |
 | `mcp-calendar/` | Calendar MCP server: Google + Outlook + iCloud, read + create + update |
 | `mcp-github/` | GitHub MCP server: read-only repo/file/code access |
+| `browser/` | Headless-Chromium CDP sidecar: renders JS pages, public sites only, no credentials |
+| `dns/` | DNS-only forwarder: lets the gateway resolve names without granting it egress |
 | `instance/config/openclaw.json.example` | The hardened gateway config (sanitized) |
 
 Live credentials, tokens, logs, the agent workspace, and the upstream OpenClaw clone are **not**
