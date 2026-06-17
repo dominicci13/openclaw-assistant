@@ -16,7 +16,9 @@ compromised model*, not just shipping features.
 
 A 60-second walkthrough: I ask Claw who it is and what it can do, then hand it a real task (compare flights, build a spreadsheet, email it to me), and finally ask it to send that to an outsider and to delete a message. It does the work, then stops at the lines it won't cross without me: an external send needs a one-time code, and it has no delete tool at all.
 
-https://github.com/user-attachments/assets/89f6a026-3c1c-4acb-a37d-d5691b0aa0af
+<div align="center">
+  <video src="https://github.com/user-attachments/assets/89f6a026-3c1c-4acb-a37d-d5691b0aa0af" controls width="320"></video>
+</div>
 
 ## Security model
 
