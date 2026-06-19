@@ -15,6 +15,9 @@ MSAL likewise uses requests under the hood, so token refresh is proxied too.
 
 from __future__ import annotations
 
+import datetime
+import re
+
 import requests
 
 from attachments import to_graph
@@ -30,19 +33,96 @@ def _session() -> requests.Session:
     return s
 
 
+_REL_UNIT_DAYS = {"d": 1, "w": 7, "m": 30, "y": 365}
+
+
+def _iso_days_ago(val: str) -> str | None:
+    """A Gmail-ish date value -> ISO-8601 UTC for a Graph $filter (None if unparseable).
+
+    Accepts relative ('1d', '2w', '3m', '1y') and absolute (YYYY-MM-DD, YYYY/MM/DD).
+    """
+    m = re.fullmatch(r"(\d+)([dwmy])", val.lower())
+    if m:
+        days = int(m.group(1)) * _REL_UNIT_DAYS[m.group(2)]
+        dt = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=days)
+        return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    for fmt in ("%Y-%m-%d", "%Y/%m/%d"):
+        try:
+            dt = datetime.datetime.strptime(val, fmt).replace(tzinfo=datetime.timezone.utc)
+            return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+        except ValueError:
+            continue
+    return None
+
+
+def _odata_str(val: str) -> str:
+    """Escape a string literal for an OData $filter (single-quote -> doubled)."""
+    return val.replace("'", "''")
+
+
+def _build_query_params(query: str, max_results: int) -> dict:
+    """Translate a (usually Gmail-style) query into Graph OData params.
+
+    Graph cannot combine $search with $filter/$orderby, so the model's Gmail-style
+    operators are routed to the right mechanism instead of being dumped verbatim
+    into $search (where 'newer_than:1d' would match the literal text -> nothing):
+      - date ops (newer_than/after/since, older_than/before) -> receivedDateTime $filter
+      - from:, is:unread/read                                 -> $filter clauses
+      - leftover free-text words                              -> $search (only if no $filter)
+      - empty                                                 -> most-recent
+    $orderby (receivedDateTime desc) is added only when every $filter clause is a
+    date one (Graph rejects $orderby alongside a non-date $filter property).
+    """
+    select = "id,conversationId,subject,from,receivedDateTime,bodyPreview"
+    base = {"$top": max_results, "$select": select}
+    if not query or not query.strip():
+        return {**base, "$orderby": "receivedDateTime desc"}
+
+    filters: list[str] = []
+    words: list[str] = []
+    date_only = True
+    for tok in query.split():
+        key, sep, val = tok.partition(":")
+        if not sep or not val:
+            words.append(tok)
+            continue
+        key = key.lower()
+        if key in ("newer_than", "after", "since"):
+            iso = _iso_days_ago(val)
+            if iso:
+                filters.append(f"receivedDateTime ge {iso}")
+        elif key in ("older_than", "before"):
+            iso = _iso_days_ago(val)
+            if iso:
+                filters.append(f"receivedDateTime le {iso}")
+        elif key == "from":
+            filters.append(f"from/emailAddress/address eq '{_odata_str(val)}'")
+            date_only = False
+        elif key == "is" and val.lower() in ("unread", "unseen"):
+            filters.append("isRead eq false")
+            date_only = False
+        elif key == "is" and val.lower() in ("read", "seen"):
+            filters.append("isRead eq true")
+            date_only = False
+        # subject:/label:/category:/etc. are unsupported here -> ignored as noise
+
+    if filters:
+        # Graph forbids $filter + $search together, so free-text words are dropped here.
+        params = {**base, "$filter": " and ".join(filters)}
+        if date_only:
+            params["$orderby"] = "receivedDateTime desc"
+        return params
+    if words:
+        return {**base, "$search": '"%s"' % " ".join(words).replace('"', "")}
+    return {**base, "$orderby": "receivedDateTime desc"}
+
+
 def search_messages(query: str, max_results: int = 10) -> list[dict]:
-    """Search the Outlook mailbox. `query` is Graph $search syntax (free text,
-    or KQL props like from:/subject:); empty query lists most-recent."""
+    """Search the Outlook mailbox. Accepts Gmail-style operators (newer_than:,
+    from:, is:unread) - translated to Graph $filter/$search by _build_query_params -
+    as well as plain free text; empty query lists most-recent."""
     max_results = max(1, min(max_results, 25))
-    params: dict = {
-        "$top": max_results,
-        "$select": "id,conversationId,subject,from,receivedDateTime,bodyPreview",
-    }
-    if query:
-        # $search can't be combined with $orderby (Graph limitation); quotes required.
-        params["$search"] = f'"{query}"'
-    else:
-        params["$orderby"] = "receivedDateTime desc"
+    params = _build_query_params(query, max_results)
 
     r = _session().get(f"{GRAPH}/me/messages", params=params, timeout=30)
     r.raise_for_status()
