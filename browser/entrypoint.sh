@@ -29,6 +29,10 @@ chromium \
   --disable-dev-shm-usage \
   --disable-extensions \
   --disable-background-networking \
+  --disable-component-update \
+  --disable-domain-reliability \
+  --no-pings \
+  --disable-features=OptimizationHints,OptimizationGuideModelDownloading,OptimizationGuideOnDeviceModel,Translate,MediaRouter,InterestFeedContentSuggestions \
   --disable-breakpad --disable-crash-reporter \
   --metrics-recording-only \
   --password-store=basic --use-mock-keychain \
