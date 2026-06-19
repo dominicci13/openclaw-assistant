@@ -8,7 +8,7 @@
 
 services:
   openclaw-gateway:
-    image: ghcr.io/openclaw/openclaw:2026.6.5
+    image: ghcr.io/openclaw/openclaw:2026.6.8@sha256:9f55f0cb32b2925a983f40726440189b8f422ec61ae2a0fb0cf90403cf6d63d7
     container_name: openclaw-gateway
     networks:
       - openclaw-internal
@@ -102,7 +102,7 @@ services:
       start_period: 20s
 
   openclaw-cli:
-    image: ghcr.io/openclaw/openclaw:2026.6.5
+    image: ghcr.io/openclaw/openclaw:2026.6.8@sha256:9f55f0cb32b2925a983f40726440189b8f422ec61ae2a0fb0cf90403cf6d63d7
     # Admin-only service: the profile keeps `docker compose up -d` from starting
     # it as a permanently-running container. `docker compose run --rm openclaw-cli`
     # still works — run targets the named service regardless of profile.
