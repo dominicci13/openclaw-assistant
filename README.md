@@ -12,6 +12,10 @@ delete/overwrite tools, a per-send consent gate, and prompt-injection defense in
 credentials it touches are the real crown jewels, so the design optimizes for *containing a
 compromised model*, not just shipping features.
 
+> **📌 Point-in-time snapshot.** This public repo documents the security-first build as of
+> mid-2026 and is preserved as-is for reference. Active development of the assistant continues in a
+> private repository and will not be reflected here.
+
 ## Demo
 
 A 60-second walkthrough: I ask Claw who it is and what it can do, then hand it a real task (compare flights, build a spreadsheet, email it to me), and finally ask it to send that to an outsider and to delete a message. It does the work, then stops at the lines it won't cross without me: an external send needs a one-time code, and it has no delete tool at all.
